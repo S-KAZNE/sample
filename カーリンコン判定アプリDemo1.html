@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>カーリンコン判定</title>
+  <script async src="https://docs.opencv.org/4.x/opencv.js" type="text/javascript"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      background: #f0f0f0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 100vh;
+      overflow: hidden;
+    }
+    h2 {
+      margin-top: 1em;
+      font-size: 1.5em;
+      color: #333;
+    }
+    video {
+      width: 90vw;
+      max-width: 400px;
+      border-radius: 8px;
+      margin-top: 1em;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    }
+    button {
+      font-size: 1.5em;
+      padding: 1em 2em;
+      margin: 1.5em;
+      background-color: #ff6f61;
+      color: white;
+      border: none;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+    }
+    #result {
+      font-size: 1.2em;
+      color: #333;
+      margin-bottom: 1em;
+    }
+    canvas {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h2>カーリンコン判定</h2>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
+  <button onclick="runDetection()">判定</button>
+  <div id="result">結果がここに表示されます</div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
+      .then(stream => {
+        video.srcObject = stream;
+        video.onloadedmetadata = () => {
+          video.play();
+        };
+      })
+      .catch(err => {
+        alert("カメラにアクセスできません: " + err.message);
+      });
+
+    function runDetection() {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      let src = cv.imread(canvas);
+      let hsv = new cv.Mat();
+      cv.cvtColor(src, hsv, cv.COLOR_RGBA2RGB);
+      cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+
+      let orangeMask = new cv.Mat();
+      let redMask = new cv.Mat();
+      let greenMask = new cv.Mat();
+
+      let orangeLow = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [5, 100, 100]);
+      let orangeHigh = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [20, 255, 255]);
+      let redLow = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [0, 100, 100]);
+      let redHigh = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [10, 255, 255]);
+      let greenLow = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [40, 50, 50]);
+      let greenHigh = new cv.Mat(hsv.rows, hsv.cols, hsv.type(), [80, 255, 255]);
+
+      cv.inRange(hsv, orangeLow, orangeHigh, orangeMask);
+      cv.inRange(hsv, redLow, redHigh, redMask);
+      cv.inRange(hsv, greenLow, greenHigh, greenMask);
+
+      let orangeCenter = getCenter(orangeMask);
+      let redCenters = getCenters(redMask);
+      let greenCenters = getCenters(greenMask);
+
+      let redDistances = redCenters.map(p => distance(p, orangeCenter));
+      let greenDistances = greenCenters.map(p => distance(p, orangeCenter));
+
+      let minRed = Math.min(...redDistances);
+      let minGreen = Math.min(...greenDistances);
+
+      let winner = minRed < minGreen ? '赤' : '緑';
+      let score = 0;
+
+      if (winner === '赤') {
+        score = redDistances.filter(d => d < minGreen).length;
+      } else {
+        score = greenDistances.filter(d => d < minRed).length;
+      }
+
+      document.getElementById('result').innerText = `${winner}チームが${score}点！`;
+
+      // 後処理
+      orangeLow.delete(); orangeHigh.delete();
+      redLow.delete(); redHigh.delete();
+      greenLow.delete(); greenHigh.delete();
+      orangeMask.delete(); redMask.delete(); greenMask.delete();
+      hsv.delete(); src.delete();
+    }
+
+    function getCenter(mask) {
+      let moments = cv.moments(mask, true);
+      let cx = moments.m10 / moments.m00;
+      let cy = moments.m01 / moments.m00;
+      return {x: cx, y: cy};
+    }
+
+    function getCenters(mask) {
+      let contours = new cv.MatVector();
+      let hierarchy = new cv.Mat();
+      cv.findContours(mask, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+      let centers = [];
+      for (let i = 0; i < contours.size(); ++i) {
+        let cnt = contours.get(i);
+        let moments = cv.moments(cnt, false);
+        let cx = moments.m10 / moments.m00;
+        let cy = moments.m01 / moments.m00;
+        centers.push({x: cx, y: cy});
+        cnt.delete();
+      }
+      contours.delete(); hierarchy.delete();
+      return centers;
+    }
+
+    function distance(p1, p2) {
+      return Math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2);
+    }
+  </script>
+</body>
+</html>
